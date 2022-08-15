@@ -1,0 +1,280 @@
+
+#functions to plot
+ma <- function(arr, n=15){
+  res = arr
+  
+  for(i in (floor(n/2)+1):(length(arr)-floor(n/2))){
+    
+    res[i] = mean(arr[(i-floor(n/2)):(i+floor(n/2))])
+    
+  }
+  res
+}
+
+mean_cl_quantile <- function(x, q = c(0.1, 0.9), na.rm = TRUE){
+  dat <- data.frame(y = mean(x, na.rm = na.rm),
+                    ymin = quantile(x, probs = q[1], na.rm = na.rm),
+                    ymax = quantile(x, probs = q[2], na.rm = na.rm))
+  return(dat)
+}
+
+
+
+# ######################################################
+## Data downloaded from 
+#https://data.mendeley.com/datasets/pdnjz7zz5x/1   (before 05/2022)
+
+library(data.table)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(uclust)
+
+# file1="100_Batches_IndPenSim_V3.csv"
+# peni2 <- read.csv(file1,stringsAsFactors=FALSE, header=T, nrows=5) 
+# colnames(peni2)[12:25]
+# colnames(peni2)[14]
+# dim(peni2)
+# 
+# btc_ref <- fread(file1, select = c(36)) #1 to 100
+# btc_ref_control<-fread(file1, select = c(37))# 0 and 1's
+# timeh<-fread(file1, select = 1)
+# time<-timeh*10/2
+# 
+# #Batches 1-30: Controlled by recipe driven approach 
+# #Batches 31-60: Controlled by operators 
+# #Batches 61:90: Controlled by an Advanced Process Control (APC)  solution using the Raman spectroscopy
+# #Batches 91:100: Contain faults resulting in process deviations.
+# 
+# col_btc=14 # col 14 eh a var "Penicillin.concentration.P.g.L."
+# 
+# df<-data.frame(c(fread(file1, select = col_btc),btc_ref,btc_ref_control,time))
+# df[,5]<-c(0,diff(df[,1]))  
+# colnames(df)=c("var","ref","group","time","diff_var")
+# dfs<-df
+# 
+# d_ref=61:90
+# df<-filter(dfs, ref %in% c(d_ref,91:100))
+# 
+# save(df,file="Penicillin")
+load("Penicillin")
+d_ref=61:90
+d_inc<-length(d_ref)
+
+###############################################################
+df$ref2[which(df$group==1)]<-"Faulty group"
+df$ref2[which(df$group==0)]<-"In-control group"
+
+p_pen<-ggplot(df, 
+             aes(x=time, y=var, group=ref,  
+                 color=factor(ref2))) +
+  geom_point(aes(shape=factor(group)), size=0.001) +
+  geom_line()+
+  theme(legend.text = element_text(size=12),legend.position = "bottom")+ labs( y="Penicillin C.",colour="")
+
+p_pen<-p_pen + guides(fill = FALSE, linetype = FALSE, shape = FALSE)
+#p_pen
+
+
+
+#################################################
+t_max=835
+serie_media=c()
+for(t in 1:t_max){
+  serie_media[t]=mean(df$var[which(df$time==t)][1:d_inc])
+}
+#plot.ts(serie_media)
+df2<-df[which(df$time<=t_max),]
+df2$serie_media<-c(rep(serie_media,(d_inc+10)))
+df2$diff_var<-df2$var-df2$serie_media # diferenciada da media
+
+df2<-df2[which(df2$time>2),];t_max=t_max-2
+df2$ref2<-df2$ref
+df2$ref2[which(df2$group==1)]<-"Faulty group"
+df2$ref2[which(df2$group==0)]<-"In-control group"
+p_penc<-ggplot(df2, 
+              aes(x=time, y=diff_var, group=ref,  
+                  color=factor(ref2))) +
+  geom_point(aes(shape=factor(group)), size=0.001) +
+  geom_line()+
+  theme(legend.text = element_text(size=12),legend.position = "bottom")+ labs( y="Penicillin C.. - Mean Centered",colour="")
+
+p_penc<-p_penc + guides(fill = FALSE, linetype = FALSE, shape = FALSE)
+#p_penc #centered
+
+grid.arrange(p_pen,p_penc,ncol=2) #1100 x 500
+
+
+
+
+#################################################
+
+
+s_ma=matrix(0,nrow =(d_inc+10),ncol=t_max )
+s_sd=s_ma
+
+k=0
+mean_average=NULL
+for(i in c(d_ref,91:100) ){
+  k=k+1
+  st=df$var[which(df$ref==i)][1:t_max]
+  s_ma[k,]=st-ma(st)
+  s_sd[k,]=df2$diff_var[which(df2$ref==i)][1:t_max]
+  mean_average=c(mean_average,s_ma[k,])
+}
+df2$mean_average=mean_average
+
+p_ma<-ggplot(df2, 
+             aes(x=time, y=mean_average, group=ref,  
+                 color=factor(ref2))) +
+  geom_point(aes(shape=factor(group)), size=0.001) +
+  geom_line() +
+  theme(legend.text = element_text(size=12),legend.position = "bottom")+ labs( y="Penicillin C. - Moving Average Centered",colour="")
+
+p_ma<-p_ma + guides(fill = FALSE, linetype = FALSE, shape = FALSE)
+#p_ma #mean average centered
+
+
+##leave-one-out (calculo das U's sob H0, Drift-charts)
+md <- as.matrix(dist(s_sd)^2)
+U0=c()
+conf=0.95
+sd_bn=sqrt(var_bn(c((d_inc-1),1),md = md[1:d_inc,1:d_inc]))
+for(i in 1:d_inc){
+  group_id=rep(1,d_inc)
+  group_id[i]=0
+  U0[i]=bn(group_id, md=md[1:d_inc,1:d_inc])
+  
+}
+#hist(U0/sd_bn)
+U0drift=U0/sd_bn
+sum(U0/sd(U0)>qnorm(conf))
+sd(U0)
+
+
+#U1 drfit  
+U1=c()
+k=0
+for(i in (d_inc+1):(d_inc+10)){
+  k=k+1
+  dados <- rbind(s_sd[1:(d_inc-1),],s_sd[i,])
+  group_id=c(rep(1,(d_inc-1)),0)
+  U1[k]=bn(group_id, data=dados)
+}
+
+U1drift=U1/sd(U0)
+sum(U1drift>qnorm(conf))# 
+
+
+
+########################################
+# Dynamics
+# ACF
+#####################################
+LagMax=200
+m_acf=matrix(0,ncol=LagMax,nrow=40)
+for(i in 1:(d_inc+10)){
+  m_acf[i,]=acf(s_ma[i,],plot=FALSE,lag.max = LagMax)$acf[-1]
+}
+
+
+#############################################
+reff=c()
+reff[1:d_inc]="In-control group"
+reff[31:40]="Faulty group"
+dt=list()
+
+for(j in 1:(d_inc+10)){
+  dt[[j]] <- data.table(Lag = seq(1,dim(m_acf)[2]),coefs = m_acf[j,],ref=rep(reff[j],dim(m_acf)[2]))
+}
+
+dt <- rbindlist(dt,idcol = 'Run') 
+p_acf_ma=ggplot(dt, aes(Lag, coefs,group=factor(ref),colour=factor(ref))) +
+  stat_summary(geom = "line", fun.y = mean) +
+  geom_smooth(stat = 'summary', fun.data = mean_cl_quantile,alpha = 0.2,size=0.25,aes(fill = factor(ref)))
+p_acf_ma=p_acf_ma +theme(legend.text = element_text(size=12),legend.position = "bottom")+ labs( y="ACF of Penicillin C. - Moving Average Centered",fill="",group="",colour="")
+
+grid.arrange(p_ma,p_acf_ma,ncol=2) #1100 x 500
+
+
+##leave-one-out (calc  U's under H0, dynamic-charts)
+U0=c()
+sd_bn=sqrt(var_bn(c((d_inc-1),1),data = m_acf[1:d_inc,]))
+for(i in 1:d_inc){
+  group_id=rep(1,d_inc)
+  group_id[i]=0
+  U0[i]=bn(group_id, data=m_acf[1:d_inc,])#/sd_bn
+}
+
+
+#hist(U0/sd(U0))
+#hist(U0/sd_bn)
+U0Dy=U0/sd(U0)
+sum((U0/sd(U0))>qnorm(conf))
+
+#U1 
+U1=c()
+k=0
+for(i in (d_inc+1):(d_inc+10)){
+  k=k+1
+  dados <- rbind(s_ma[1:(d_inc-1),],s_sd[i,])
+  group_id=c(rep(1,(d_inc-1)),0)
+  U1[k]=bn(group_id, data=dados)
+}
+U1Dy=U1/sd(U0)
+sum(U1Dy>qnorm(conf)) # 
+
+#############################################################
+# Plot chart drift
+library(latex2exp)
+
+quantil_alpha=qnorm(conf)
+T2_g=c(U0drift,U1drift)
+vc=(T2_g>quantil_alpha)*1
+IC=d_inc
+IC.new=10
+
+df=data.frame(i=1:(IC+IC.new),T2_g=T2_g, vc=vc)
+
+go<-ggplot(df, aes(x=i,y=T2_g))+geom_point()
+#go<-go+ggtitle("T2_Beta scores of Dynamic ARMA coefficients")
+#go<-go+geom_hline(yintercept = 0)
+go<-go+geom_vline(xintercept = IC,linetype="dashed",size=0.6)
+go<-go+xlab("batches")+ylab(TeX("$V_d$ - scores "))+
+  ggtitle("Drift monitoring")+
+  theme(plot.title=element_text(margin=margin(t=40,b=-30),hjust = 0.5))
+go<-go+geom_hline(yintercept = quantil_alpha)
+go<-go+geom_point(aes(color=as.factor(vc)),y=df[,2],x=df[,1])+ylim(c(0,max(max(df$T2_g),quantil_alpha)+5))
+go<-go+guides(color = FALSE)
+go<-go+scale_color_manual(values=c("blue","red"))
+g=go  
+pchart_drift=g
+
+
+#############################################################
+# Plot chart drift
+CubeRoot<-function(x){
+  sign(x)*abs(x)^(1/3)
+}
+
+quantil_alpha<-CubeRoot(quantil_alpha)
+T2_g=c(CubeRoot(U0Dy),CubeRoot(U1Dy))
+vc=(T2_g>quantil_alpha)*1
+
+df=data.frame(i=1:(IC+IC.new),T2_g=T2_g, vc=vc)
+
+go<-ggplot(df, aes(x=i,y=T2_g))+geom_point()
+#go<-go+ggtitle("T2_Beta scores of Dynamic ARMA coefficients")
+#go<-go+geom_hline(yintercept = 0)
+go<-go+geom_vline(xintercept = IC,linetype="dashed",size=0.6)
+go<-go+xlab("batches")+ylab(TeX(" $V_s$ - scores "))+
+  ggtitle("Dynamic monitoring")+
+  theme(plot.title=element_text(margin=margin(t=40,b=-30),hjust = 0.5))
+go<-go+geom_hline(yintercept = quantil_alpha)
+go<-go+geom_point(aes(color=as.factor(vc)),y=df[,2],x=df[,1])+ylim(c(0,max(max(df$T2_g),quantil_alpha)+5))
+go<-go+guides(color = FALSE)
+go<-go+scale_color_manual(values=c("blue","red"))
+g=go  
+pchart_dy=g
+
+grid.arrange(pchart_drift,pchart_dy,ncol=2) #1100 x 500
